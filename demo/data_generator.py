@@ -357,6 +357,12 @@ def generate_all_data():
     }
 
 
+def load_real_data():
+    """Load real data from the Excel file via excel_loader."""
+    from excel_loader import load_real_data as _load
+    return _load()
+
+
 if __name__ == "__main__":
     data = generate_all_data()
     print(f"Employees:   {len(data['employees'])} records")

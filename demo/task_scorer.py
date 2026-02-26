@@ -18,10 +18,15 @@ import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 
-from data_generator import EMPLOYEES
+from data_generator import EMPLOYEES as _DEFAULT_EMPLOYEES
 
 
 MODEL_PATH = Path(__file__).parent / "ml_model.pkl"
+
+
+def _get_employees(employees=None):
+    """Return provided employee list or fall back to synthetic defaults."""
+    return employees if employees is not None else _DEFAULT_EMPLOYEES
 
 
 # ─── ML Model Training ───────────────────────────────────────────────────────
@@ -190,7 +195,7 @@ def check_qualifications(employee, task_type, required_skills,
 
 
 def score_employees_for_task(task_type, required_skills, schedule_df,
-                             completions_df, shift_start=None):
+                             completions_df, shift_start=None, employees=None):
     """
     Calculate assignment scores for all employees using the 40-30-20-10 formula.
 
@@ -211,10 +216,11 @@ def score_employees_for_task(task_type, required_skills, schedule_df,
             "ml_confidence": float,
         }
     """
+    emp_list = _get_employees(employees)
     today = pd.Timestamp(schedule_df["date"].max())
     results = []
 
-    for emp in EMPLOYEES:
+    for emp in emp_list:
         qualified, reasons, comp_count, success_rate, current_tasks = (
             check_qualifications(
                 emp, task_type, required_skills,

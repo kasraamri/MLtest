@@ -9,8 +9,9 @@ Runs all four demo scenarios with formatted console output:
   4. Assignment Removal Suggestion
 
 Usage:
-    python demo_app.py          # Run all scenarios
-    python demo_app.py --scenario 1   # Run specific scenario (1-4)
+    python demo_app.py               # Run all scenarios (synthetic data)
+    python demo_app.py --real        # Run all scenarios (real Excel data)
+    python demo_app.py --scenario 2  # Run specific scenario (1-4)
 """
 
 import sys
@@ -75,34 +76,34 @@ def status_icon(qualified, confidence=None):
 
 # ─── Scenario 1: Unused Availability Detection ───────────────────────────────
 
-def run_scenario_1(data):
+def run_scenario_1(data, emp_list):
     header("Scenario 1: Availability Analysis")
 
     schedule = data["schedule"]
     absences = data["absences"]
 
-    # Focus on Maria (ID 1) - the strongest pattern
-    print(f"  {DIM}Analyzing 6 months of scheduling data...{RESET}")
+    print(f"  {DIM}Analyzing scheduling data...{RESET}")
     print(f"  {DIM}Schedule records: {len(schedule):,}{RESET}")
     print(f"  {DIM}Excluding {len(absences)} absence records{RESET}")
     print()
 
-    findings = detect_all_patterns(schedule, absences)
+    findings = detect_all_patterns(schedule, absences, employees=emp_list)
 
     # Show top findings (high confidence first)
     shown = 0
     for f in findings:
-        if f["confidence"] < 80:
+        if f["confidence"] < 50:
             continue
         shown += 1
-        if shown > 3:
+        if shown > 5:
             break
 
         conf_color = GREEN if f["confidence"] >= 90 else YELLOW
+        sched_word = "Rarely" if f["times_scheduled"] > 0 else "Never"
         print(f"  {BOLD}[{shown}] AVAILABILITY PATTERN DETECTED{RESET}")
         print(f"  Employee: {BOLD}{f['employee_name']}{RESET} (ID: {f['employee_id']:03d})")
-        print(f"  Pattern:  Never scheduled on {f['day']}s despite availability")
-        print(f"    - Available: {f['total_available']} {f['day']}s (last 6 months)")
+        print(f"  Pattern:  {sched_word} scheduled on {f['day']}s despite availability")
+        print(f"    - Available: {f['total_available']} {f['day']}s")
         print(f"    - Scheduled: {f['times_scheduled']} times")
         print(f"    - Deviations: {f['deviations']}")
         print(f"    - Confidence: {conf_color}{f['confidence']}%{RESET}")
@@ -114,10 +115,22 @@ def run_scenario_1(data):
         print()
 
     if shown == 0:
-        print(f"  {DIM}No high-confidence patterns detected.{RESET}")
+        print(f"  {DIM}No patterns detected above 50% confidence.{RESET}")
+        # Show lower-confidence findings as info
+        low = [f for f in findings if f["confidence"] >= 25]
+        if low:
+            print(f"  {DIM}Lower-confidence findings:{RESET}")
+            for f in low[:3]:
+                print(f"    - {f['employee_name']} {f['day']}: "
+                      f"{f['deviations']}/{f['total_available']} deviations "
+                      f"({f['confidence']}%)")
+        print()
 
-    # Alternating patterns
-    alt_patterns = detect_alternating_patterns(1, schedule, absences)
+    # Alternating patterns - check first employee
+    first_emp_id = emp_list[0]["id"] if emp_list else 1
+    alt_patterns = detect_alternating_patterns(
+        first_emp_id, schedule, absences, employees=emp_list
+    )
     if alt_patterns:
         print(f"\n  {BOLD}ALTERNATING PATTERNS:{RESET}")
         for p in alt_patterns:
@@ -128,14 +141,21 @@ def run_scenario_1(data):
 
 # ─── Scenario 2: Task Assignment Ranking ──────────────────────────────────────
 
-def run_scenario_2(data):
+def run_scenario_2(data, emp_list, task_type=None, required_skills=None):
     header("Scenario 2: Task Assignment")
 
-    task_type = "cashier"
-    required_skills = ["cashier", "customer_service"]
-    shift_start = 14
+    # Determine best task to demo based on data
+    if task_type is None:
+        # Pick the most common task in completions
+        top_tasks = data["completions"]["task_type"].value_counts()
+        task_type = top_tasks.index[0] if len(top_tasks) > 0 else "cashier"
 
-    print(f"  {BOLD}Task:{RESET} Cashier Shift - Tuesday 14:00-18:00")
+    if required_skills is None:
+        required_skills = [task_type]
+
+    shift_start = 8
+
+    print(f"  {BOLD}Task:{RESET} {task_type} - Morning Shift")
     print(f"  {BOLD}Skills Required:{RESET} {', '.join(required_skills)}")
     print()
 
@@ -143,6 +163,7 @@ def run_scenario_2(data):
         task_type, required_skills,
         data["schedule"], data["completions"],
         shift_start=shift_start,
+        employees=emp_list,
     )
 
     qualified = [r for r in results if r["qualified"]]
@@ -191,16 +212,21 @@ def run_scenario_2(data):
 
 # ─── Scenario 3: Priority Upgrade Suggestion ─────────────────────────────────
 
-def run_scenario_3(data):
+def run_scenario_3(data, emp_list):
     header("Scenario 3: Priority Upgrade")
 
-    # John (ID 2) - frequently does cleaning (not officially assigned)
-    suggestions = suggest_priority_changes(2, data["schedule"], data["completions"])
+    # Find employees with ADD or UPGRADE suggestions
+    all_add = []
+    all_upgrade = []
+    for emp in emp_list:
+        suggestions = suggest_priority_changes(
+            emp["id"], data["schedule"], data["completions"],
+            employees=emp_list,
+        )
+        all_add.extend([s for s in suggestions if s["action"] == "ADD"])
+        all_upgrade.extend([s for s in suggestions if s["action"] == "UPGRADE"])
 
-    add_suggestions = [s for s in suggestions if s["action"] == "ADD"]
-    upgrade_suggestions = [s for s in suggestions if s["action"] == "UPGRADE"]
-
-    for s in add_suggestions:
+    for s in all_add[:3]:
         print(f"  {BOLD}TASK ASSIGNMENT ADDITION SUGGESTED{RESET}")
         print(f"  Employee: {BOLD}{s['employee_name']}{RESET} (ID: {s['employee_id']:03d})")
         print(f"  Task:     \"{s['task']}\" {DIM}(not officially assigned){RESET}")
@@ -210,7 +236,7 @@ def run_scenario_3(data):
         print(f"     Reason: Consistently used and performs well")
         print()
 
-    for s in upgrade_suggestions:
+    for s in all_upgrade[:3]:
         print(f"  {BOLD}PRIORITY UPGRADE SUGGESTED{RESET}")
         print(f"  Employee: {BOLD}{s['employee_name']}{RESET} (ID: {s['employee_id']:03d})")
         print(f"  Task:     \"{s['task']}\"")
@@ -219,26 +245,29 @@ def run_scenario_3(data):
         print(f"  {BLUE}-> RECOMMENDATION: UPGRADE to priority task{RESET}")
         print()
 
-    if not add_suggestions and not upgrade_suggestions:
-        # Fallback: show all suggestions for John
-        print(f"  {DIM}Checking priority changes for John Muller...{RESET}")
-        for s in suggestions:
-            print(f"  - {s['action']}: {s['reason']}")
+    if not all_add and not all_upgrade:
+        print(f"  {DIM}No priority upgrade suggestions found.{RESET}")
+        print(f"  {DIM}All employee task assignments align with actual usage.{RESET}")
         print()
 
 
 # ─── Scenario 4: Assignment Removal Suggestion ───────────────────────────────
 
-def run_scenario_4(data):
+def run_scenario_4(data, emp_list):
     header("Scenario 4: Assignment Removal")
 
-    # Maria (ID 1) - special_events never used
-    suggestions = suggest_priority_changes(1, data["schedule"], data["completions"])
+    # Find employees with REMOVE or DOWNGRADE suggestions
+    all_remove = []
+    all_downgrade = []
+    for emp in emp_list:
+        suggestions = suggest_priority_changes(
+            emp["id"], data["schedule"], data["completions"],
+            employees=emp_list,
+        )
+        all_remove.extend([s for s in suggestions if s["action"] == "REMOVE"])
+        all_downgrade.extend([s for s in suggestions if s["action"] == "DOWNGRADE"])
 
-    remove_suggestions = [s for s in suggestions if s["action"] == "REMOVE"]
-    downgrade_suggestions = [s for s in suggestions if s["action"] == "DOWNGRADE"]
-
-    for s in remove_suggestions:
+    for s in all_remove[:3]:
         days = s.get("days_since_last", "N/A")
         print(f"  {BOLD}ASSIGNMENT REMOVAL SUGGESTED{RESET}")
         print(f"  Employee: {BOLD}{s['employee_name']}{RESET} (ID: {s['employee_id']:03d})")
@@ -249,30 +278,35 @@ def run_scenario_4(data):
         print(f"     Timeline: Downgraded at 3 months, removing at 6 months")
         print()
 
-    for s in downgrade_suggestions:
+    for s in all_downgrade[:3]:
         print(f"  {BOLD}ASSIGNMENT DOWNGRADE{RESET}")
-        print(f"  Employee: {BOLD}{s['employee_name']}{RESET}")
+        print(f"  Employee: {BOLD}{s['employee_name']}{RESET} (ID: {s['employee_id']:03d})")
         print(f"  Task:     \"{s['task']}\"")
         print(f"  Finding:  {s['reason']}")
         print()
         print(f"  {YELLOW}-> RECOMMENDATION: Downgrade to secondary{RESET}")
         print()
 
-    if not remove_suggestions and not downgrade_suggestions:
-        print(f"  {DIM}No removal/downgrade suggestions for Maria.{RESET}")
-        for s in suggestions:
-            print(f"  - {s['action']}: {s['reason']}")
+    if not all_remove and not all_downgrade:
+        print(f"  {DIM}No removal/downgrade suggestions found.{RESET}")
+        print(f"  {DIM}All assigned tasks are being actively used.{RESET}")
+        print()
 
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
-def run_summary(data):
+def run_summary(data, emp_list, is_real=False):
     section("DEMO SUMMARY")
-    print(f"  {BOLD}Data Generated:{RESET}")
-    print(f"    Employees:         {len(EMPLOYEES)}")
+    source = "Real Excel Data" if is_real else "Synthetic Data"
+    print(f"  {BOLD}Data Source:{RESET} {source}")
+    print(f"  {BOLD}Data Overview:{RESET}")
+    print(f"    Employees:         {len(emp_list)}")
     print(f"    Schedule records:  {len(data['schedule']):,}")
     print(f"    Absences:          {len(data['absences'])}")
     print(f"    Task completions:  {len(data['completions'])}")
+    if is_real and len(data['completions']) > 0:
+        sr = data['completions']['success'].mean() * 100
+        print(f"    Success rate:      {sr:.1f}% (actual within 15% of planned hours)")
     print()
     print(f"  {BOLD}Key Takeaways:{RESET}")
     print(f"    {GREEN}✓{RESET} Automated detection of unused availability saves manual review")
@@ -294,21 +328,40 @@ def main():
     parser = argparse.ArgumentParser(description="PEP BALANCE AI Demo")
     parser.add_argument("--scenario", type=int, choices=[1, 2, 3, 4],
                         help="Run a specific scenario (1-4). Omit for all.")
+    parser.add_argument("--real", action="store_true",
+                        help="Use real Excel data instead of synthetic data.")
     args = parser.parse_args()
+
+    is_real = args.real
 
     print(f"\n{BOLD}{DOUBLE_LINE}{RESET}")
     print(f"{BOLD}  PEP BALANCE AI - Workforce Intelligence Demo{RESET}")
+    if is_real:
+        print(f"{BOLD}  [REAL DATA MODE]{RESET}")
     print(f"{BOLD}{DOUBLE_LINE}{RESET}")
     print()
 
-    # Step 1: Generate data
-    print(f"  {DIM}[1/3] Generating 6 months of synthetic workforce data...{RESET}")
-    t0 = time.time()
-    data = generate_all_data()
-    t1 = time.time()
-    print(f"  {GREEN}✓{RESET} Data generated in {t1 - t0:.2f}s "
-          f"({len(data['schedule']):,} schedule records, "
-          f"{len(data['completions'])} completions)")
+    # Step 1: Load data
+    if is_real:
+        from excel_loader import load_real_data
+        print(f"  {DIM}[1/3] Loading real workforce data from Excel...{RESET}")
+        t0 = time.time()
+        data = load_real_data()
+        emp_list = data["employees_list"]
+        t1 = time.time()
+        print(f"  {GREEN}✓{RESET} Data loaded in {t1 - t0:.2f}s "
+              f"({len(emp_list)} employees, "
+              f"{len(data['schedule']):,} schedule records, "
+              f"{len(data['completions'])} completions)")
+    else:
+        print(f"  {DIM}[1/3] Generating synthetic workforce data...{RESET}")
+        t0 = time.time()
+        data = generate_all_data()
+        emp_list = EMPLOYEES
+        t1 = time.time()
+        print(f"  {GREEN}✓{RESET} Data generated in {t1 - t0:.2f}s "
+              f"({len(data['schedule']):,} schedule records, "
+              f"{len(data['completions'])} completions)")
 
     # Step 2: Train ML model
     print(f"  {DIM}[2/3] Training ML model (DecisionTreeClassifier)...{RESET}")
@@ -324,10 +377,10 @@ def main():
     print()
 
     scenarios = {
-        1: run_scenario_1,
-        2: run_scenario_2,
-        3: run_scenario_3,
-        4: run_scenario_4,
+        1: lambda d: run_scenario_1(d, emp_list),
+        2: lambda d: run_scenario_2(d, emp_list),
+        3: lambda d: run_scenario_3(d, emp_list),
+        4: lambda d: run_scenario_4(d, emp_list),
     }
 
     if args.scenario:
@@ -336,7 +389,7 @@ def main():
         for num in sorted(scenarios):
             scenarios[num](data)
 
-    run_summary(data)
+    run_summary(data, emp_list, is_real=is_real)
 
 
 if __name__ == "__main__":

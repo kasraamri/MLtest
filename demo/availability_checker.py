@@ -12,12 +12,18 @@ Rule-based deviation detection:
 from datetime import datetime
 import pandas as pd
 
-from data_generator import EMPLOYEES, DAY_ABBREV
+from data_generator import EMPLOYEES as _DEFAULT_EMPLOYEES, DAY_ABBREV
+
+
+def _get_employees(employees=None):
+    """Return provided employee list or fall back to synthetic defaults."""
+    return employees if employees is not None else _DEFAULT_EMPLOYEES
 
 
 # ─── Core Detection ──────────────────────────────────────────────────────────
 
-def detect_availability_patterns(employee_id, schedule_df, absences_df, months=6):
+def detect_availability_patterns(employee_id, schedule_df, absences_df,
+                                 months=6, employees=None):
     """
     Find unused availability slots for an employee using the 6-deviation rule.
 
@@ -25,16 +31,17 @@ def detect_availability_patterns(employee_id, schedule_df, absences_df, months=6
         {
             "employee_id": int,
             "employee_name": str,
-            "day": str,                # e.g. "Tue"
-            "slot": str,               # e.g. "8:00-12:00"
-            "total_available": int,     # days available (excl. absences)
+            "day": str,
+            "slot": str,
+            "total_available": int,
             "times_scheduled": int,
             "deviations": int,
-            "confidence": float,        # 0-100
+            "confidence": float,
             "recommendation": str,
         }
     """
-    emp = next((e for e in EMPLOYEES if e["id"] == employee_id), None)
+    emp_list = _get_employees(employees)
+    emp = next((e for e in emp_list if e["id"] == employee_id), None)
     if emp is None:
         return []
 
@@ -81,12 +88,13 @@ def detect_availability_patterns(employee_id, schedule_df, absences_df, months=6
     return findings
 
 
-def detect_all_patterns(schedule_df, absences_df, months=6):
+def detect_all_patterns(schedule_df, absences_df, months=6, employees=None):
     """Run detection across all employees, return consolidated results."""
+    emp_list = _get_employees(employees)
     all_findings = []
-    for emp in EMPLOYEES:
+    for emp in emp_list:
         findings = detect_availability_patterns(
-            emp["id"], schedule_df, absences_df, months
+            emp["id"], schedule_df, absences_df, months, employees=emp_list
         )
         all_findings.extend(findings)
     all_findings.sort(key=lambda f: f["confidence"], reverse=True)
@@ -95,13 +103,15 @@ def detect_all_patterns(schedule_df, absences_df, months=6):
 
 # ─── Alternating Pattern Detection ───────────────────────────────────────────
 
-def detect_alternating_patterns(employee_id, schedule_df, absences_df):
+def detect_alternating_patterns(employee_id, schedule_df, absences_df,
+                                employees=None):
     """
     Detect alternating-week rhythms, e.g. only scheduled on even weeks.
 
     Returns list of detected alternating patterns.
     """
-    emp = next((e for e in EMPLOYEES if e["id"] == employee_id), None)
+    emp_list = _get_employees(employees)
+    emp = next((e for e in emp_list if e["id"] == employee_id), None)
     if emp is None:
         return []
 
@@ -147,7 +157,8 @@ def detect_alternating_patterns(employee_id, schedule_df, absences_df):
 
 # ─── Priority Change Suggestions ─────────────────────────────────────────────
 
-def suggest_priority_changes(employee_id, schedule_df, completions_df):
+def suggest_priority_changes(employee_id, schedule_df, completions_df,
+                             employees=None):
     """
     Check for upgrade / downgrade / removal based on usage patterns.
 
@@ -157,7 +168,8 @@ def suggest_priority_changes(employee_id, schedule_df, completions_df):
     - Assigned task not used in 6 months → suggest removing
     - Frequently used (10+ in 3 months) → upgrade to "priority"
     """
-    emp = next((e for e in EMPLOYEES if e["id"] == employee_id), None)
+    emp_list = _get_employees(employees)
+    emp = next((e for e in emp_list if e["id"] == employee_id), None)
     if emp is None:
         return []
 
