@@ -35,6 +35,7 @@ from availability_checker import (
     detect_all_patterns,
     detect_alternating_patterns,
 )
+from excel_loader import load_real_data
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
 
@@ -108,6 +109,23 @@ class VerfuegbarkeitResponse(BaseModel):
     alternating_patterns: list[AlternatingPattern]
 
 
+# ─── Pre-load Excel Data ─────────────────────────────────────────────────────
+
+_real_data = None
+
+def _get_real_data():
+    global _real_data
+    if _real_data is None:
+        logger.info("Loading real data from Excel file...")
+        _real_data = load_real_data()
+        logger.info(
+            f"Excel data loaded: {len(_real_data['employees_list'])} employees, "
+            f"{len(_real_data['schedule'])} schedule records, "
+            f"{len(_real_data['absences'])} absences"
+        )
+    return _real_data
+
+
 # ─── App ─────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -176,6 +194,64 @@ def _run_analysis(employees, schedule_df, absences_df, config):
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/api/verfuegbarkeit", response_model=VerfuegbarkeitResponse)
+def analyze_verfuegbarkeit_real(
+    confidence_threshold: float = 50.0,
+    months: int = 6,
+):
+    """Analyze availability patterns using the pre-loaded KI-Analysedaten Excel file."""
+    data = _get_real_data()
+    employees = data["employees_list"]
+    schedule_df = data["schedule"]
+    absences_df = data["absences"]
+    config = {"confidence_threshold": confidence_threshold, "months": months, "min_deviations": 6}
+
+    logger.info(
+        f"GET /api/verfuegbarkeit - analyzing {len(employees)} employees "
+        f"from Excel (confidence>={confidence_threshold}%, months={months})"
+    )
+    findings, alternating = _run_analysis(employees, schedule_df, absences_df, config)
+    logger.info(f"Analysis complete: {len(findings)} findings, {len(alternating)} alternating patterns")
+
+    return VerfuegbarkeitResponse(
+        analyzed_employees=len(employees),
+        total_findings=len(findings),
+        findings=findings,
+        alternating_patterns=alternating,
+    )
+
+
+@app.get("/api/verfuegbarkeit/{employee_id}", response_model=VerfuegbarkeitResponse)
+def analyze_verfuegbarkeit_real_single(
+    employee_id: int,
+    confidence_threshold: float = 50.0,
+    months: int = 6,
+):
+    """Analyze a single employee from the KI-Analysedaten Excel file."""
+    data = _get_real_data()
+    employees = data["employees_list"]
+    schedule_df = data["schedule"]
+    absences_df = data["absences"]
+    config = {"confidence_threshold": confidence_threshold, "months": months, "min_deviations": 6}
+
+    emp = next((e for e in employees if e["id"] == employee_id), None)
+    if emp is None:
+        logger.warning(f"Employee {employee_id} not found in Excel data")
+        raise HTTPException(status_code=404, detail=f"Employee {employee_id} not found")
+
+    logger.info(f"GET /api/verfuegbarkeit/{employee_id} - analyzing from Excel")
+    findings, alternating = _run_analysis(employees, schedule_df, absences_df, config)
+    findings = [f for f in findings if f["employee_id"] == employee_id]
+    alternating = [a for a in alternating if a["employee_id"] == employee_id]
+
+    return VerfuegbarkeitResponse(
+        analyzed_employees=1,
+        total_findings=len(findings),
+        findings=findings,
+        alternating_patterns=alternating,
+    )
 
 
 @app.post("/api/verfuegbarkeit", response_model=VerfuegbarkeitResponse)
