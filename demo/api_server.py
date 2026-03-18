@@ -8,11 +8,26 @@ Run with:
     uvicorn api_server:app --host 0.0.0.0 --port 8000
 """
 
+import logging
+import time
+import uuid
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# ─── Logging Setup ────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("pep_balance_api.log"),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 from normalizer import normalize_request
 from availability_checker import (
@@ -109,6 +124,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = str(uuid.uuid4())[:8]
+    start = time.time()
+    logger.info(f"[{request_id}] {request.method} {request.url.path} - started")
+    try:
+        response = await call_next(request)
+        duration = round((time.time() - start) * 1000)
+        logger.info(f"[{request_id}] {request.method} {request.url.path} - {response.status_code} ({duration}ms)")
+        return response
+    except Exception as e:
+        duration = round((time.time() - start) * 1000)
+        logger.error(f"[{request_id}] {request.method} {request.url.path} - ERROR ({duration}ms): {e}")
+        raise
+
+
 def _run_analysis(employees, schedule_df, absences_df, config):
     """Run availability analysis and return structured results."""
     confidence_threshold = config.get("confidence_threshold", 50)
@@ -154,14 +185,19 @@ def analyze_verfuegbarkeit(request: VerfuegbarkeitRequest):
         data = request.model_dump()
         employees, schedule_df, absences_df, config = normalize_request(data)
     except Exception as e:
+        logger.warning(f"Normalization error: {e}")
         raise HTTPException(status_code=422, detail=f"Data normalization error: {e}")
 
     if not employees:
+        logger.warning("Request rejected: no employees provided")
         raise HTTPException(status_code=400, detail="No employees provided")
     if schedule_df.empty:
+        logger.warning("Request rejected: no schedule data provided")
         raise HTTPException(status_code=400, detail="No schedule data provided")
 
+    logger.info(f"Analyzing {len(employees)} employees, {len(schedule_df)} schedule entries")
     findings, alternating = _run_analysis(employees, schedule_df, absences_df, config)
+    logger.info(f"Analysis complete: {len(findings)} findings, {len(alternating)} alternating patterns")
 
     return VerfuegbarkeitResponse(
         analyzed_employees=len(employees),
@@ -178,11 +214,13 @@ def analyze_verfuegbarkeit_single(employee_id: int, request: VerfuegbarkeitReque
         data = request.model_dump()
         employees, schedule_df, absences_df, config = normalize_request(data)
     except Exception as e:
+        logger.warning(f"Normalization error for employee {employee_id}: {e}")
         raise HTTPException(status_code=422, detail=f"Data normalization error: {e}")
 
     # Filter to requested employee
     emp = next((e for e in employees if e["id"] == employee_id), None)
     if emp is None:
+        logger.warning(f"Employee {employee_id} not found in request")
         raise HTTPException(status_code=404, detail=f"Employee {employee_id} not found")
 
     # Run analysis with all employees context but filter results
